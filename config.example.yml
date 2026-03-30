@@ -1,0 +1,24 @@
+# nginx-proxy-exporter configuration
+# Nginx log metrics + SSL certificate monitoring
+
+listen:
+  address: "127.0.0.1"
+  port: 4040
+
+# Nginx JSON access log (requires json_analytics format with ua_class field)
+log_file: "/var/log/nginx/access.json.log"
+
+# SSL certificate monitoring
+ssl:
+  enabled: true
+  check_interval: "1h"
+  # Only check certs actually referenced by nginx configs (avoids orphans)
+  nginx_conf_dir: "/etc/nginx/sites-enabled"
+  # Fallback glob patterns (also checked, but marked as in_use=false if not in nginx)
+  glob_patterns:
+    - "/etc/letsencrypt/live/*/fullchain.pem"
+
+# Prometheus histogram buckets
+buckets:
+  duration: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120]
+  response_size: [100, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000]
