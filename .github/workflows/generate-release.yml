@@ -1,0 +1,19 @@
+name: Generate Changelog and Create new Release
+
+on:
+  workflow_run:
+    workflows: [Generate New Version]
+    types: [completed]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Generate Release
+        uses: moreirodamian/github-actions/generate-release@v1
+        with:
+          commit_format: "labels"

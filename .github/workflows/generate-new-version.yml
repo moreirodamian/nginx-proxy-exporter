@@ -1,0 +1,29 @@
+name: Generate New Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: "patch"
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Bump Version
+        uses: moreirodamian/github-actions/version-bump@v1
+        with:
+          version_file: "version.json"
+          version_key: ".version"
+          version_type: ${{ inputs.version_type }}
+          bot_pat: ${{ secrets.GH_BOT_PAT }}
