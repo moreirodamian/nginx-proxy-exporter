@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -70,9 +71,46 @@ func statusClass(s string) string {
 	}
 }
 
+// cardinalityTracker limits unique label values per scope (e.g. per server_name).
+// Once the cap is reached, new values are replaced with "__other__".
+type cardinalityTracker struct {
+	mu   sync.Mutex
+	sets map[string]map[string]struct{}
+	max  int
+}
+
+func newCardinalityTracker(max int) *cardinalityTracker {
+	return &cardinalityTracker{
+		sets: make(map[string]map[string]struct{}),
+		max:  max,
+	}
+}
+
+func (t *cardinalityTracker) resolve(scope, value string) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	s, ok := t.sets[scope]
+	if !ok {
+		s = make(map[string]struct{})
+		t.sets[scope] = s
+	}
+	if _, exists := s[value]; exists {
+		return value
+	}
+	if len(s) >= t.max {
+		return "__other__"
+	}
+	s[value] = struct{}{}
+	return value
+}
+
 type exporter struct {
 	logFile string
 	cfg     *Config
+
+	pathTracker *cardinalityTracker
+	uaTracker   *cardinalityTracker
 
 	requests    *prometheus.CounterVec
 	duration    *prometheus.HistogramVec
@@ -90,12 +128,17 @@ type exporter struct {
 
 	linesOK prometheus.Counter
 	lineErr prometheus.Counter
+
+	droppedPaths prometheus.Counter
+	droppedUA    prometheus.Counter
 }
 
 func newExporter(cfg *Config) *exporter {
 	e := &exporter{
-		logFile: cfg.LogFile,
-		cfg:     cfg,
+		logFile:     cfg.LogFile,
+		cfg:         cfg,
+		pathTracker: newCardinalityTracker(cfg.Limits.MaxPaths),
+		uaTracker:   newCardinalityTracker(cfg.Limits.MaxUAFamilies),
 
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "nginx_log_requests_total",
@@ -155,13 +198,21 @@ func newExporter(cfg *Config) *exporter {
 			Name: "nginx_log_exporter_parse_errors_total",
 			Help: "Lines failed to parse.",
 		}),
+		droppedPaths: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "nginx_log_exporter_dropped_paths_total",
+			Help: "Path label values replaced with __other__ due to cardinality cap.",
+		}),
+		droppedUA: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "nginx_log_exporter_dropped_ua_total",
+			Help: "UA family label values replaced with __other__ due to cardinality cap.",
+		}),
 	}
 
 	prometheus.MustRegister(
 		e.requests, e.duration, e.upstreamDur, e.bodySize,
 		e.pathRequests, e.pathDuration, e.uaFamilyReqs,
 		e.statusTotal, e.sslProto, e.httpProto,
-		e.linesOK, e.lineErr,
+		e.linesOK, e.lineErr, e.droppedPaths, e.droppedUA,
 	)
 	return e
 }
@@ -207,16 +258,24 @@ func (e *exporter) processLine(line []byte) {
 		e.bodySize.WithLabelValues(sn).Observe(bsf)
 	}
 
-	// Path-level
-	path := normalizePath(entry.RequestURI)
+	// Path-level (cardinality-capped)
+	rawPath := normalizePath(entry.RequestURI)
+	path := e.pathTracker.resolve(sn, rawPath)
+	if path == "__other__" && rawPath != "__other__" {
+		e.droppedPaths.Inc()
+	}
 	sc := statusClass(st)
 	e.pathRequests.WithLabelValues(sn, path, sc).Inc()
 	if rt, err := strconv.ParseFloat(entry.RequestTime, 64); err == nil {
 		e.pathDuration.WithLabelValues(sn, path).Observe(rt)
 	}
 
-	// UA family
-	family := extractUAFamily(entry.UserAgent)
+	// UA family (cardinality-capped)
+	rawFamily := extractUAFamily(entry.UserAgent)
+	family := e.uaTracker.resolve(sn, rawFamily)
+	if family == "__other__" && rawFamily != "__other__" {
+		e.droppedUA.Inc()
+	}
 	e.uaFamilyReqs.WithLabelValues(sn, family, ua).Inc()
 
 	// Global
@@ -323,6 +382,7 @@ func main() {
 	log.Printf("nginx-proxy-exporter %s", version)
 	log.Printf("log file: %s", cfg.LogFile)
 	log.Printf("listen: %s", cfg.ListenAddr())
+	log.Printf("limits: max_paths=%d max_ua_families=%d per server", cfg.Limits.MaxPaths, cfg.Limits.MaxUAFamilies)
 
 	e := newExporter(cfg)
 	go e.tailFile()

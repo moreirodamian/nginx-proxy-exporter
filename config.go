@@ -8,10 +8,16 @@ import (
 )
 
 type Config struct {
-	Listen  ListenConfig  `yaml:"listen"`
-	LogFile string        `yaml:"log_file"`
-	SSL     SSLConfig     `yaml:"ssl"`
-	Buckets BucketsConfig `yaml:"buckets"`
+	Listen   ListenConfig   `yaml:"listen"`
+	LogFile  string         `yaml:"log_file"`
+	SSL      SSLConfig      `yaml:"ssl"`
+	Buckets  BucketsConfig  `yaml:"buckets"`
+	Limits   LimitsConfig   `yaml:"limits"`
+}
+
+type LimitsConfig struct {
+	MaxPaths     int `yaml:"max_paths"`
+	MaxUAFamilies int `yaml:"max_ua_families"`
 }
 
 type ListenConfig struct {
@@ -54,6 +60,10 @@ func defaultConfig() *Config {
 		Buckets: BucketsConfig{
 			Duration: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5, 7.5, 10, 15, 20, 30, 60},
 			Size:     []float64{100, 1000, 5000, 10000, 50000, 100000, 500000, 1e6, 5e6},
+		},
+		Limits: LimitsConfig{
+			MaxPaths:      500,
+			MaxUAFamilies: 100,
 		},
 	}
 }
