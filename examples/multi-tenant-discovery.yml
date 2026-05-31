@@ -1,0 +1,114 @@
+# Multi-tenant proxy with filesystem-based discovery.
+#
+# Scenario: one nginx box proxies many products (e.g. shop, web, landings)
+# and each product has many tenants (customers). The .conf files are
+# organised as
+#
+#     /etc/nginx/sites-enabled/<product>/<tenant>[_proxy].conf
+#
+# Each .conf may contain several `server` blocks with different `server_name`
+# directives that all belong to the same (product, tenant). The default
+# path_pattern matches this layout out of the box.
+#
+# The exporter:
+#   1. Scans sites_dir, derives (product, tenant) from each file path.
+#   2. Extracts `server_name X Y Z;` directives from each file.
+#   3. Builds a server_name -> (product, tenant) map, refreshed every 5m.
+#   4. At ingest time, looks up each log line by server_name and emits the
+#      declarative aggregations with product/tenant labels.
+#
+# Cardinality with 100 tenants across 5 products: ~2000 series total.
+
+listen:
+  address: "127.0.0.1"
+  port: 4040
+
+log_file: "/var/log/nginx/access.json.log"
+
+ssl:
+  enabled: true
+  check_interval: "1h"
+  nginx_conf_dir: "/etc/nginx/sites-enabled"
+  glob_patterns:
+    - "/etc/letsencrypt/live/*/fullchain.pem"
+
+discovery:
+  enabled: true
+  sites_dir: "/etc/nginx/sites-enabled"
+  refresh_interval: "5m"
+
+  # Default pattern matches `<sites_dir>/<product>/<tenant>[_proxy].conf`.
+  # Override if your tree is structured differently.
+  path_pattern: '(?P<product>[^/]+)/(?P<tenant>[^/]+?)(?:_proxy)?\.conf$'
+
+  # Default server_name extractor handles both block and inline styles, and
+  # skips commented-out lines. You rarely need to change this.
+  server_name_pattern: '\bserver_name\s+([^;]+);'
+
+  unmapped:
+    labels:
+      product: "__unmapped__"
+      tenant: "__unmapped__"
+    cap_top: 50
+
+  # Optional manual mapping that wins over discovered values. Useful for
+  # dual-purpose domains, special tenants, or while migrating.
+  # static_overrides:
+  #   - server_name: "vip.example.com"
+  #     labels: { product: "shop", tenant: "vip-customer" }
+
+metrics:
+  prefix: "nginx_proxy"
+  max_series_total: 50000
+
+  # Turn off the v0.8 metric set entirely (we have native product/tenant
+  # labels now, server_name labels are redundant and high-cardinality).
+  legacy:
+    enabled: false
+
+  aggregations:
+    # === Per-product overview (low cardinality, top-line health) ===
+    - name: requests_total
+      type: counter
+      labels: [product, status_class, method]
+
+    - name: request_duration_seconds
+      type: histogram
+      labels: [product, status_class]
+      source_field: request_time
+      buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
+
+    - name: upstream_duration_seconds
+      type: histogram
+      labels: [product]
+      source_field: upstream_response_time
+      buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
+
+    # === Per-tenant drill-down ===
+    - name: tenant_requests_total
+      type: counter
+      labels: [product, tenant, status_class]
+
+    - name: tenant_request_duration_seconds
+      type: histogram
+      labels: [product, tenant]
+      source_field: request_time
+      # Coarser buckets for the higher-cardinality dimension.
+      buckets: [0.1, 0.5, 1, 2.5, 10]
+
+    # === Cross-cutting analysis ===
+    - name: status_total
+      type: counter
+      labels: [status]
+
+    - name: ua_class_total
+      type: counter
+      labels: [ua_class]
+
+    - name: ssl_protocol_total
+      type: counter
+      labels: [ssl_protocol]
+
+    - name: http_protocol_total
+      type: counter
+      labels: [http_protocol]

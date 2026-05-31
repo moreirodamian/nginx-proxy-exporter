@@ -1,0 +1,48 @@
+# Custom discovery layout — same engine, your structure.
+#
+# Suppose your nginx configs live at `/etc/nginx/vhosts/<env>-<service>.conf`
+# (e.g. prod-api.conf, staging-web.conf). You can express that as a different
+# path_pattern with different named groups, and the engine adapts.
+#
+# Whatever names you choose for the regex groups become the labels available
+# to aggregations.
+
+listen:
+  address: "127.0.0.1"
+  port: 4040
+
+log_file: "/var/log/nginx/access.json.log"
+
+ssl:
+  enabled: false
+
+discovery:
+  enabled: true
+  sites_dir: "/etc/nginx/vhosts"
+  refresh_interval: "5m"
+
+  # Captures `prod-api` → env=prod, service=api
+  path_pattern: 'vhosts/(?P<env>[^-]+)-(?P<service>[^.]+)\.conf$'
+
+  unmapped:
+    labels:
+      env: "unknown"
+      service: "unknown"
+    cap_top: 50
+
+metrics:
+  prefix: "nginx_proxy"
+  legacy:
+    enabled: false
+  max_series_total: 20000
+
+  aggregations:
+    - name: requests_total
+      type: counter
+      labels: [env, service, status_class, method]
+
+    - name: request_duration_seconds
+      type: histogram
+      labels: [env, service]
+      source_field: request_time
+      buckets: [0.05, 0.1, 0.5, 1, 5]

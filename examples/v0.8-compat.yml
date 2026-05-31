@@ -1,0 +1,34 @@
+# Backwards-compat example: identical metric output to v0.8.x
+#
+# Use this if you're upgrading from v0.8.x and don't want to change dashboards
+# yet. Path tracking is re-enabled but now bounded by a global cap (in v0.8 it
+# was a per-server cap that became multiplicative in practice).
+#
+# After validating dashboards keep working, consider migrating to the
+# declarative model in examples/multi-tenant-discovery.yml.
+
+listen:
+  address: "127.0.0.1"
+  port: 4040
+
+log_file: "/var/log/nginx/access.json.log"
+
+ssl:
+  enabled: true
+  check_interval: "1h"
+  nginx_conf_dir: "/etc/nginx/sites-enabled"
+  glob_patterns:
+    - "/etc/letsencrypt/live/*/fullchain.pem"
+
+buckets:
+  duration: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120]
+  response_size: [100, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000]
+
+metrics:
+  legacy:
+    enabled: true
+    track_paths: true
+    # Global cap on distinct (server_name, normalized_path) combinations.
+    # When reached, further values collapse to "__other__".
+    max_paths_global: 5000
+    max_ua_families_global: 1000

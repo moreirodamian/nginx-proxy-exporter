@@ -1,0 +1,39 @@
+# Custom log_format — map your existing fields onto the exporter's model.
+#
+# The exporter reads a JSON access log and projects each field onto an
+# internal logEntry struct. If your nginx log_format uses different field
+# names (e.g. "host" instead of "server_name"), declare the mapping here
+# instead of changing your nginx config.
+
+listen:
+  address: "127.0.0.1"
+  port: 4040
+
+log_file: "/var/log/nginx/access.json.log"
+
+ssl:
+  enabled: false
+
+# Each key on the left is what the exporter calls the field internally.
+# Each value on the right is the JSON key in YOUR log_format.
+# Set a value to empty ("") to disable that field.
+log_fields:
+  server_name: "host"
+  request_uri: "uri"
+  request_method: "method"
+  status: "status"
+  request_time: "duration"
+  upstream_response_time: "backend_time"
+  bytes_sent: "size"
+  body_bytes_sent: "body_size"
+  http_user_agent: "user_agent"
+  ua_class: "client_class"
+  ssl_protocol: "tls_version"
+  server_protocol: "http_version"
+
+metrics:
+  prefix: "nginx_proxy"
+  legacy:
+    enabled: true
+    # New default; remove to keep path metrics off.
+    track_paths: false

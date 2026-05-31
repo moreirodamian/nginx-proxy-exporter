@@ -5,3 +5,4 @@ proxy-exporter
 dist/
 .env
 .claude/
+nginx-proxy-exporter_*
