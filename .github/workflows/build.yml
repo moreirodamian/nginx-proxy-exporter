@@ -1,15 +1,30 @@
 name: Build
 
 on:
+  # Manual tag push (e.g. `git push origin v1.2.3`).
   push:
     tags:
       - 'v*'
+  # Chained from the release workflow. Tags pushed by GITHUB_TOKEN don't
+  # trigger `on: push`, so we rely on workflow_run instead.
+  workflow_run:
+    workflows: ["Generate Changelog and Create new Release"]
+    types: [completed]
+  # Manual escape hatch — re-build a release that for some reason missed its
+  # assets. Pass the tag name (e.g. v0.9.0).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v0.9.0)"
+        required: true
 
 permissions:
   contents: write
 
 jobs:
   build:
+    # Skip the workflow_run trigger when the upstream release workflow failed.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-22.04
     strategy:
       matrix:
@@ -20,17 +35,40 @@ jobs:
             goarch: arm64
 
     steps:
-      - name: Checkout
+      - name: Resolve build context
+        id: ctx
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          case "${{ github.event_name }}" in
+            push)
+              TAG="${GITHUB_REF_NAME}"
+              ;;
+            workflow_dispatch)
+              TAG="${{ inputs.tag }}"
+              ;;
+            workflow_run)
+              # The release workflow just created the tag. Pick the latest one.
+              TAG=$(gh release list -R "${GITHUB_REPOSITORY}" -L 1 --json tagName --jq '.[0].tagName')
+              ;;
+          esac
+          if [ -z "$TAG" ]; then
+            echo "::error::Could not resolve tag"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag: $TAG"
+
+      - name: Checkout at tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ctx.outputs.tag }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-
-      - name: Get version from tag
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
 
       - name: Build
         env:
@@ -38,10 +76,11 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          go build -ldflags "-s -w -X main.version=${{ steps.version.outputs.version }}" \
+          go build -ldflags "-s -w -X main.version=${{ steps.ctx.outputs.version }}" \
             -o nginx-proxy-exporter_${{ matrix.goos }}_${{ matrix.goarch }} .
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.ctx.outputs.tag }}
           files: nginx-proxy-exporter_${{ matrix.goos }}_${{ matrix.goarch }}
